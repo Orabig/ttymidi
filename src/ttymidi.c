@@ -21,7 +21,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-#include <termios.h>
+//#include <termios.h>
+#include <asm/termios.h>
 #include <stdio.h>
 #include <argp.h>
 #include <alsa/asoundlib.h>
@@ -64,6 +65,7 @@ typedef struct _arguments
 	int  silent, verbose, printonly;
 	char serialdevice[MAX_DEV_STR_LEN];
 	int  baudrate;
+	int nonstandard;
 	char name[MAX_DEV_STR_LEN];
 } arguments_t;
 
@@ -110,6 +112,7 @@ static error_t parse_opt (int key, char *arg, struct argp_state *state)
 					case 4800   : arguments->baudrate = B4800  ; break;
 					case 9600   : arguments->baudrate = B9600  ; break;
 					case 19200  : arguments->baudrate = B19200 ; break;
+					case 31250  : arguments->baudrate = B38400 ; arguments->nonstandard = 31250; break;
 					case 38400  : arguments->baudrate = B38400 ; break;
 					case 57600  : arguments->baudrate = B57600 ; break;
 					case 115200 : arguments->baudrate = B115200; break;
@@ -134,6 +137,7 @@ void arg_set_defaults(arguments_t *arguments)
 	arguments->silent       = 0;
 	arguments->verbose      = 0;
 	arguments->baudrate     = B115200;
+	arguments->nonstandard  = -1;
 	char *name_tmp		= (char *)"ttymidi";
 	strncpy(arguments->serialdevice, serialdevice_temp, MAX_DEV_STR_LEN);
 	strncpy(arguments->name, name_tmp, MAX_DEV_STR_LEN);
@@ -515,19 +519,19 @@ main(int argc, char** argv)
 	tcgetattr(serial, &oldtio); 
 
 	/* clear struct for new port settings */
-	bzero(&newtio, sizeof(newtio)); 
+	bzero(&newtio, sizeof(newtio));
 
-	/* 
-	 * BAUDRATE : Set bps rate. You could also use cfsetispeed and cfsetospeed.
-	 * CRTSCTS  : output hardware flow control (only used if the cable has
-	 * all necessary lines. See sect. 7 of Serial-HOWTO)
-	 * CS8      : 8n1 (8bit, no parity, 1 stopbit)
-	 * CLOCAL   : local connection, no modem contol
-	 * CREAD    : enable receiving characters
-	 */
-	newtio.c_cflag = arguments.baudrate | CS8 | CLOCAL | CREAD; // CRTSCTS removed
+    /*
+     * BAUDRATE : Set bps rate. You could also use cfsetispeed and cfsetospeed.
+     * CRTSCTS  : output hardware flow control (only used if the cable has
+     * all necessary lines. See sect. 7 of Serial-HOWTO)
+     * CS8      : 8n1 (8bit, no parity, 1 stopbit)
+     * CLOCAL   : local connection, no modem contol
+     * CREAD    : enable receiving characters
+     */
+    newtio.c_cflag = arguments.baudrate | CS8 | CLOCAL | CREAD; // CRTSCTS removed
 
-	/*
+    /*
 	 * IGNPAR  : ignore bytes with parity errors
 	 * ICRNL   : map CR to NL (otherwise a CR input on the other computer
 	 * will not terminate input)
@@ -555,6 +559,19 @@ main(int argc, char** argv)
 	 */
 	tcflush(serial, TCIFLUSH);
 	tcsetattr(serial, TCSANOW, &newtio);
+
+	/* smbaker: hack in nonstandard baud rate stuff */
+    if (arguments.nonstandard>0) {
+       struct termios2 tio;   // linux-specific terminal stuff
+       if (ioctl(serial, TCGETS2, &tio) < 0)    // get current uart state
+           return -1;
+       tio.c_cflag &= ~CBAUD;
+       tio.c_cflag |= BOTHER;
+       tio.c_ispeed = arguments.nonstandard;
+       tio.c_ospeed = arguments.nonstandard;         // set custom speed directly
+       if (ioctl(serial, TCSETS2, &tio) < 0)    // push uart state
+           return -1;
+    }
 
 	// Linux-specific: enable low latency mode (FTDI "nagling off")
 //	ioctl(serial, TIOCGSERIAL, &ser_info);
