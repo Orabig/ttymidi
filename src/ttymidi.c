@@ -289,8 +289,13 @@ void write_midi_action_to_serial_port(snd_seq_t* seq_handle)
 
 	do 
 	{
+	  ev=NULL;
 		snd_seq_event_input(seq_handle, &ev);
 
+                if (ev == NULL) {
+		  continue;
+		}
+		
 		switch (ev->type) 
 		{
 
